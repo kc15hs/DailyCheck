@@ -11,13 +11,24 @@ const shareBtn      = qs('#shareBtn');
 const shareDialog   = qs('#shareDialog');
 const exportCsvBtn  = qs('#exportCsvBtn');
 const toggleCompletedBtn = qs('#toggleCompletedVisibility');
+const sortModeBtn   = qs('#sortModeBtn');
 
 // 表示トグル：デフォルトは「チェック済みを非表示」
 let showCompleted = false;
+// 並び順モード：'auto'（実行→予定→無し） / 'planned'（予定時刻のみ）
+let sortMode = 'auto';
 
 function updateToggleBtnLabel(){
-  if(!toggleCompletedBtn) return;
-  toggleCompletedBtn.textContent = `チェック済み表示：${showCompleted ? 'オン' : 'オフ'}`;
+  if(toggleCompletedBtn){
+    toggleCompletedBtn.textContent = `チェック済み表示：${showCompleted ? 'オン' : 'オフ'}`;
+  }
+}
+function updateSortModeBtnLabel(){
+  if(sortModeBtn){
+    sortModeBtn.textContent = (sortMode === 'auto')
+      ? '並び順：実行→予定'
+      : '並び順：予定のみ';
+  }
 }
 
 function todayISO(){
@@ -81,8 +92,9 @@ const toDate = s => {
   return isNaN(d.getTime()) ? null : d;
 };
 
-// ==== 並べ替えキー：実行時刻があればそれ、無ければ予定時刻、どちらも無ければ最後 ====
+// === 並べ替えユーティリティ ===
 function keyTimeMillis(row){
+  // 実行時刻があればそれを優先、無ければ予定時刻、どちらも無ければ null
   const cd = toDate(row.completed_at);
   if(cd) return cd.getTime();
   if(row.planned_time){
@@ -94,17 +106,27 @@ function keyTimeMillis(row){
   return null;
 }
 
+function compareAuto(a,b){
+  const ak = keyTimeMillis(a);
+  const bk = keyTimeMillis(b);
+  if(ak!=null && bk!=null) return ak - bk;
+  if(ak!=null) return -1;
+  if(bk!=null) return 1;
+  return a._idx - b._idx;
+}
+
+function comparePlanned(a,b){
+  const at = a.planned_time || '';
+  const bt = b.planned_time || '';
+  if(at && bt) return at.localeCompare(bt); // HH:MM 文字列昇順
+  if(at && !bt) return -1;
+  if(!at && bt) return 1;
+  return a._idx - b._idx; // どちらも無し → 元順
+}
+
 function sortRowsForDisplay(rows){
-  return rows
-    .map((r, i)=> ({...r, _idx: r._idx ?? i}))
-    .sort((a,b)=>{
-      const ak = keyTimeMillis(a);
-      const bk = keyTimeMillis(b);
-      if(ak!=null && bk!=null) return ak - bk;
-      if(ak!=null) return -1;
-      if(bk!=null) return 1;
-      return a._idx - b._idx;
-    });
+  const withIdx = rows.map((r,i)=> ({...r, _idx: r._idx ?? i}));
+  return withIdx.sort(sortMode === 'auto' ? compareAuto : comparePlanned);
 }
 
 // ==== 読み込み ====
@@ -252,7 +274,7 @@ function renderRows(date, rows){
       if(cb.checked){
         st[row.id] = {checked:1, completed_at: nowISOWithTZ()};
       }else{
-        st[row.id] = {checked:0, completed_at:''}; // OFFで実行時刻クリア
+        st[row.id] = {checked:0, completed_at:''}; // OFF時は実行時刻クリア
       }
       saveState(date, st);
       const idx = currentRows.findIndex(x=>x.id===row.id);
@@ -261,7 +283,7 @@ function renderRows(date, rows){
         currentRows[idx].completed_at = st[row.id].completed_at;
       }
       currentRows = sortRowsForDisplay(currentRows);
-      renderRows(date, currentRows); // 再描画時に非表示ルールが適用される
+      renderRows(date, currentRows);
     });
 
     tdOps.append(delBtn, cb);
@@ -288,7 +310,7 @@ function renderRows(date, rows){
       tdUrl.textContent = '—'; tdUrl.style.color = '#778';
     }
 
-    // ✅ 表示トグル：チェック済みは必要に応じて非表示（DOMには残す＝保存やCSV出力に影響なし）
+    // チェック済み非表示（保存やCSVには影響しない）
     if(!showCompleted && row.checked){
       tr.style.display = 'none';
     }
@@ -296,7 +318,6 @@ function renderRows(date, rows){
     tr.append(tdOps, tdExec, tdTime, tdTask, tdUrl);
     taskBody.append(tr);
   });
-  // 空表示は「データ未ロード用」のまま運用（全件非表示でもメッセージは出さない）
   emptyMsg.style.display = rows.length ? 'none' : '';
   updateSummary();
 }
@@ -321,16 +342,11 @@ function loadFromFile(file){
       currentRows = mergeWithLocal(parsed, targetDateEl.value);
     }
 
-    // completed_atがある場合は最新の実行日を対象日に反映（既実装）
+    // 実行時刻があれば、もっとも新しい実行日を対象日に反映
     const execDates = currentRows
       .map(r => r.completed_at)
       .filter(Boolean)
-      .map(iso => {
-        const d = toDate(iso);
-        if(!d) return '';
-        const pad = n => String(n).padStart(2,'0');
-        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-      })
+      .map(isoToLocalDateStr)
       .filter(Boolean);
     if(execDates.length){
       const mostRecent = execDates.sort().at(-1);
@@ -389,7 +405,7 @@ async function exportCSV(){
       await writable.close();
       return;
     }catch(e){
-      return; // キャンセル時などはフォールバックも行わない（末尾番号回避）
+      return; // キャンセル時などはフォールバックもしない（番号付与回避）
     }
   }
   const url  = URL.createObjectURL(blob);
@@ -406,15 +422,20 @@ async function exportCSV(){
 window.addEventListener('DOMContentLoaded', ()=>{
   targetDateEl.value = todayISO();
   updateToggleBtnLabel();
+  updateSortModeBtnLabel();
 
-  if(toggleCompletedBtn){
-    toggleCompletedBtn.addEventListener('click', ()=>{
-      showCompleted = !showCompleted;
-      updateToggleBtnLabel();
-      // 現在のモデルで再描画（表示/非表示の切替のみ）
-      renderRows(targetDateEl.value, currentRows);
-    });
-  }
+  toggleCompletedBtn?.addEventListener('click', ()=>{
+    showCompleted = !showCompleted;
+    updateToggleBtnLabel();
+    renderRows(targetDateEl.value, currentRows);
+  });
+
+  sortModeBtn?.addEventListener('click', ()=>{
+    sortMode = (sortMode === 'auto') ? 'planned' : 'auto';
+    updateSortModeBtnLabel();
+    currentRows = sortRowsForDisplay(currentRows);
+    renderRows(targetDateEl.value, currentRows);
+  });
 
   fileInput.addEventListener('change', ()=>{
     const f = fileInput.files?.[0];
