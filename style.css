@@ -59,7 +59,7 @@ button:active{transform:translateY(1px)}
 }
 table{
   border-collapse:separate;border-spacing:0;width:100%;
-  min-width:700px;
+  min-width:820px; /* 実行時刻列追加に合わせて拡張 */
 }
 thead th{
   position:sticky;top:0;background:#12161e;color:var(--muted);
@@ -77,6 +77,7 @@ tbody tr:hover{background:#141923}
   width:72px; min-width:72px;
   text-align:center; white-space:nowrap;
 }
+.col-exec{width:110px; min-width:110px; white-space:nowrap}
 .col-time{width:110px; min-width:110px; white-space:nowrap}
 .col-url{width:140px; min-width:140px; white-space:nowrap}
 .col-task{width:auto}

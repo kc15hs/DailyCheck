@@ -68,9 +68,45 @@ function smartSplit(line){
 }
 
 function rowKey(planned, task, url){ return `${planned||''}|${task||''}|${url||''}`; }
+const toDate = s => {
+  if(!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+// ==== 並べ替えキー：実行時刻があればそれ、無ければ予定時刻、どちらも無ければ最後 ====
+function keyTimeMillis(row){
+  // 1) completed_at（ISO）優先
+  const cd = toDate(row.completed_at);
+  if(cd) return cd.getTime();
+
+  // 2) planned_time（HH:MM）を「本日」のミリ秒に
+  if(row.planned_time){
+    const [hh, mm] = row.planned_time.split(':').map(Number);
+    const d = new Date();
+    d.setHours(hh||0, mm||0, 0, 0);
+    return d.getTime();
+  }
+
+  // 3) 無し
+  return null;
+}
+
+function sortRowsForDisplay(rows){
+  return rows
+    .map((r, i)=> ({...r, _idx: r._idx ?? i}))
+    .sort((a,b)=>{
+      const ak = keyTimeMillis(a);
+      const bk = keyTimeMillis(b);
+      if(ak!=null && bk!=null) return ak - bk; // 両方キーあり → 昇順
+      if(ak!=null) return -1;                  // 片方のみキーあり → そちらを先
+      if(bk!=null) return 1;
+      return a._idx - b._idx;                  // どちらも無し → 元順
+    });
+}
 
 // ==== 読み込み ====
-let currentRows = []; // [{planned_time, task, url, checked, completed_at, id}]
+let currentRows = []; // [{planned_time, task, url, checked, completed_at, id, _idx}]
 
 function parseUserFormat(text){
   const rows = [];
@@ -86,17 +122,12 @@ function parseUserFormat(text){
       url: url || '',
       checked: 0,
       completed_at: '',
+      _idx: rows.length
     };
     obj.id = rowKey(obj.planned_time, obj.task, obj.url);
     rows.push(obj);
   });
-  rows.sort((a,b)=>{
-    if(!a.planned_time && !b.planned_time) return 0;
-    if(!a.planned_time) return 1;
-    if(!b.planned_time) return -1;
-    return a.planned_time.localeCompare(b.planned_time);
-  });
-  return rows;
+  return sortRowsForDisplay(rows);
 }
 
 function looksLikeAppHeader(s){
@@ -126,17 +157,12 @@ function parseAppCSV(text){
       url,
       checked: (checked==='1'||checked==='true') ? 1 : 0,
       completed_at: completed_at || '',
+      _idx: rows.length
     };
     obj.id = rowKey(obj.planned_time, obj.task, obj.url);
     rows.push(obj);
   }
-  rows.sort((a,b)=>{
-    if(!a.planned_time && !b.planned_time) return 0;
-    if(!a.planned_time) return 1;
-    if(!b.planned_time) return -1;
-    return a.planned_time.localeCompare(b.planned_time);
-  });
-  return rows;
+  return sortRowsForDisplay(rows);
 }
 
 function detectAndParse(text){
@@ -147,26 +173,35 @@ function detectAndParse(text){
 
 function mergeWithLocal(rows, date){
   const state = loadState(date); // key -> {checked, completed_at}
-  return rows.map(r=>{
+  const merged = rows.map(r=>{
     const local = state[r.id];
     if(local){
       return {...r, checked: local.checked ?? r.checked, completed_at: local.completed_at ?? r.completed_at};
     }
     return r;
   });
+  return sortRowsForDisplay(merged);
 }
 
 function mergePreferAppCSV(rows, date){
   const state = loadState(date);
-  const merged = {};
+  const mergedState = {};
   rows.forEach(r=>{
-    merged[r.id] = {checked: r.checked, completed_at: r.completed_at};
+    mergedState[r.id] = {checked: r.checked, completed_at: r.completed_at};
   });
   // keep any local-only rows too
   Object.keys(state).forEach(id=>{
-    if(!merged[id]) merged[id] = state[id];
+    if(!mergedState[id]) mergedState[id] = state[id];
   });
-  saveState(date, merged);
+  saveState(date, mergedState);
+}
+
+// ==== 表示ユーティリティ ====
+function hhmmFromISO(iso){
+  const d = toDate(iso);
+  if(!d) return '—';
+  const pad = n => String(n).padStart(2,'0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // ==== 描画 ====
@@ -194,13 +229,9 @@ function renderRows(date, rows){
       // currentRows から削除
       const idx = currentRows.findIndex(x=>x.id===row.id);
       if(idx>=0) currentRows.splice(idx, 1);
-      // DOM から削除
-      tr.remove();
-      // UI 更新
-      updateSummary();
-      if(qsa('#taskBody tr').length === 0){
-        emptyMsg.style.display = '';
-      }
+      // 並び替え & 再描画
+      currentRows = sortRowsForDisplay(currentRows);
+      renderRows(dateKey, currentRows);
     });
 
     // チェックボックス
@@ -213,29 +244,36 @@ function renderRows(date, rows){
       if(cb.checked){
         st[row.id] = {checked:1, completed_at: nowISOWithTZ()};
       }else{
+        // ③ チェックOFF時、実行時刻もクリア
         st[row.id] = {checked:0, completed_at:''};
       }
       saveState(date, st);
-      // 画面モデル反映
+      // モデル更新
       const idx = currentRows.findIndex(x=>x.id===row.id);
       if(idx>=0){
         currentRows[idx].checked = st[row.id].checked;
         currentRows[idx].completed_at = st[row.id].completed_at;
       }
-      updateSummary();
+      // ③ 動的並べ替え
+      currentRows = sortRowsForDisplay(currentRows);
+      renderRows(date, currentRows);
     });
 
     tdOps.append(delBtn, cb);
 
-    // 2列目：時間
+    // 2列目：実行時刻
+    const tdExec = document.createElement('td');
+    tdExec.textContent = hhmmFromISO(row.completed_at);
+
+    // 3列目：予定時刻
     const tdTime = document.createElement('td');
     tdTime.textContent = row.planned_time || '—';
 
-    // 3列目：要件
+    // 4列目：要件
     const tdTask = document.createElement('td');
     tdTask.textContent = row.task || '—';
 
-    // 4列目：リンク
+    // 5列目：リンク
     const tdUrl = document.createElement('td');
     if(row.url){
       const a = document.createElement('a');
@@ -245,7 +283,7 @@ function renderRows(date, rows){
       tdUrl.textContent = '—'; tdUrl.style.color = '#778';
     }
 
-    tr.append(tdOps, tdTime, tdTask, tdUrl);
+    tr.append(tdOps, tdExec, tdTime, tdTask, tdUrl);
     taskBody.append(tr);
   });
   emptyMsg.style.display = rows.length ? 'none' : '';
@@ -266,11 +304,15 @@ function loadFromFile(file){
     const parsed = detectAndParse(text);
     const fromAppCSV = looksLikeAppHeader((text.split(/\r?\n/)[0]||''));
     if(fromAppCSV){
+      // アプリ出力CSVの場合：CSV側（チェック/完了時刻）を採用してローカル状態を置換
       mergePreferAppCSV(parsed, targetDateEl.value);
       currentRows = parsed;
     }else{
+      // 手書き入力の場合：既存ローカル状態を優先して反映
       currentRows = mergeWithLocal(parsed, targetDateEl.value);
     }
+    // 表示用の並びを最終確定
+    currentRows = sortRowsForDisplay(currentRows);
     renderRows(targetDateEl.value, currentRows);
   };
   reader.readAsText(file, 'utf-8');
@@ -279,14 +321,14 @@ function loadFromFile(file){
 function exportCSV(){
   const date = targetDateEl.value;
   const st = loadState(date);
-  // DOMの行順で出力（削除済み行はDOMにないので除外される）
+  // DOMの行順で出力（削除済み行はDOMにないので除外）
   const rows = [];
   qsa('#taskBody tr').forEach(tr=>{
     const tds = qsa('td', tr);
-    // 列順： [0]=操作, [1]=時間, [2]=要件, [3]=リンク
-    const planned = tds[1].textContent==='—' ? '' : tds[1].textContent;
-    const task    = tds[2].textContent==='—' ? '' : tds[2].textContent;
-    const linkEl  = qs('a', tds[3]);
+    // 列順： [0]=操作, [1]=実行, [2]=予定, [3]=要件, [4]=リンク
+    const planned = tds[2].textContent==='—' ? '' : tds[2].textContent;
+    const task    = tds[3].textContent==='—' ? '' : tds[3].textContent;
+    const linkEl  = qs('a', tds[4]);
     const url     = linkEl ? linkEl.getAttribute('href') : '';
     const cb      = qs('input[type="checkbox"]', tds[0]);
     const id      = cb.dataset.id;
@@ -347,7 +389,9 @@ window.addEventListener('DOMContentLoaded', ()=>{
       }
     });
     saveState(date, map);
-    updateSummary();
+    // 並べ替え & 再描画
+    currentRows = sortRowsForDisplay(currentRows);
+    renderRows(date, currentRows);
   });
 
   clearChecksBtn.addEventListener('click', ()=>{
@@ -355,7 +399,9 @@ window.addEventListener('DOMContentLoaded', ()=>{
     localStorage.removeItem(storageKey(date));
     qsa('tbody td.opscell input[type="checkbox"]').forEach(b=> b.checked = false);
     currentRows.forEach(r=>{ r.checked = 0; r.completed_at=''; });
-    updateSummary();
+    // 並べ替え & 再描画
+    currentRows = sortRowsForDisplay(currentRows);
+    renderRows(date, currentRows);
   });
 
   shareBtn.addEventListener('click', ()=>{
@@ -386,6 +432,8 @@ window.addEventListener('DOMContentLoaded', ()=>{
         currentRows[idx].completed_at = (local && local.completed_at) || '';
       }
     });
-    updateSummary();
+    // 並べ替え & 再描画
+    currentRows = sortRowsForDisplay(currentRows);
+    renderRows(date, currentRows);
   });
 });
