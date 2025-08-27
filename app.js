@@ -6,12 +6,19 @@ const targetDateEl = qs('#targetDate');
 const fileInput     = qs('#fileInput');
 const taskBody      = qs('#taskBody');
 const emptyMsg      = qs('#emptyMessage');
-const toggleAllBtn  = qs('#toggleAll');
-const clearChecksBtn= qs('#clearChecks');
 const summaryEl     = qs('#summary');
 const shareBtn      = qs('#shareBtn');
 const shareDialog   = qs('#shareDialog');
 const exportCsvBtn  = qs('#exportCsvBtn');
+const toggleCompletedBtn = qs('#toggleCompletedVisibility');
+
+// 表示トグル：デフォルトは「チェック済みを非表示」
+let showCompleted = false;
+
+function updateToggleBtnLabel(){
+  if(!toggleCompletedBtn) return;
+  toggleCompletedBtn.textContent = `チェック済み表示：${showCompleted ? 'オン' : 'オフ'}`;
+}
 
 function todayISO(){
   const d = new Date();
@@ -166,7 +173,6 @@ function detectAndParse(text){
   return parseUserFormat(text);
 }
 
-// ISO日時文字列 → ローカルYYYY-MM-DD
 function isoToLocalDateStr(iso){
   const d = toDate(iso);
   if(!d) return '';
@@ -246,7 +252,7 @@ function renderRows(date, rows){
       if(cb.checked){
         st[row.id] = {checked:1, completed_at: nowISOWithTZ()};
       }else{
-        st[row.id] = {checked:0, completed_at:''}; // OFF時は実行時刻クリア
+        st[row.id] = {checked:0, completed_at:''}; // OFFで実行時刻クリア
       }
       saveState(date, st);
       const idx = currentRows.findIndex(x=>x.id===row.id);
@@ -255,7 +261,7 @@ function renderRows(date, rows){
         currentRows[idx].completed_at = st[row.id].completed_at;
       }
       currentRows = sortRowsForDisplay(currentRows);
-      renderRows(date, currentRows);
+      renderRows(date, currentRows); // 再描画時に非表示ルールが適用される
     });
 
     tdOps.append(delBtn, cb);
@@ -282,9 +288,15 @@ function renderRows(date, rows){
       tdUrl.textContent = '—'; tdUrl.style.color = '#778';
     }
 
+    // ✅ 表示トグル：チェック済みは必要に応じて非表示（DOMには残す＝保存やCSV出力に影響なし）
+    if(!showCompleted && row.checked){
+      tr.style.display = 'none';
+    }
+
     tr.append(tdOps, tdExec, tdTime, tdTask, tdUrl);
     taskBody.append(tr);
   });
+  // 空表示は「データ未ロード用」のまま運用（全件非表示でもメッセージは出さない）
   emptyMsg.style.display = rows.length ? 'none' : '';
   updateSummary();
 }
@@ -309,14 +321,19 @@ function loadFromFile(file){
       currentRows = mergeWithLocal(parsed, targetDateEl.value);
     }
 
-    // ★ completed_at がある場合は、最も新しい実行日(ローカル日付)を対象日に反映
+    // completed_atがある場合は最新の実行日を対象日に反映（既実装）
     const execDates = currentRows
       .map(r => r.completed_at)
       .filter(Boolean)
-      .map(isoToLocalDateStr)
+      .map(iso => {
+        const d = toDate(iso);
+        if(!d) return '';
+        const pad = n => String(n).padStart(2,'0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      })
       .filter(Boolean);
     if(execDates.length){
-      const mostRecent = execDates.sort().at(-1); // 文字列YYYY-MM-DDは辞書順でOK
+      const mostRecent = execDates.sort().at(-1);
       if(mostRecent) targetDateEl.value = mostRecent;
     }
 
@@ -326,13 +343,13 @@ function loadFromFile(file){
   reader.readAsText(file, 'utf-8');
 }
 
-// ★ 同名上書き保存（対応ブラウザはFile System Access APIを使用）
 async function exportCSV(){
   const date = targetDateEl.value;
   const st = loadState(date);
   const rows = [];
   qsa('#taskBody tr').forEach(tr=>{
     const tds = qsa('td', tr);
+    // 列順：[0]=操作, [1]=実行, [2]=予定, [3]=要件, [4]=リンク
     const planned = tds[2].textContent==='—' ? '' : tds[2].textContent;
     const task    = tds[3].textContent==='—' ? '' : tds[3].textContent;
     const linkEl  = qs('a', tds[4]);
@@ -360,8 +377,6 @@ async function exportCSV(){
   const filename = `DailyCheck‗${yy}${mm}${dd}.csv`;
 
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
-
-  // File System Access API が使える場合は同名上書き（末尾番号は付かない）
   if('showSaveFilePicker' in window){
     try{
       const handle = await window.showSaveFilePicker({
@@ -374,12 +389,9 @@ async function exportCSV(){
       await writable.close();
       return;
     }catch(e){
-      // ユーザーがキャンセル等した場合は何もしない（フォールバックしない）
-      return;
+      return; // キャンセル時などはフォールバックも行わない（末尾番号回避）
     }
   }
-
-  // フォールバック（環境により末尾番号が付く可能性あり）
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
@@ -393,40 +405,20 @@ async function exportCSV(){
 // ==== イベント ====
 window.addEventListener('DOMContentLoaded', ()=>{
   targetDateEl.value = todayISO();
+  updateToggleBtnLabel();
+
+  if(toggleCompletedBtn){
+    toggleCompletedBtn.addEventListener('click', ()=>{
+      showCompleted = !showCompleted;
+      updateToggleBtnLabel();
+      // 現在のモデルで再描画（表示/非表示の切替のみ）
+      renderRows(targetDateEl.value, currentRows);
+    });
+  }
 
   fileInput.addEventListener('change', ()=>{
     const f = fileInput.files?.[0];
     if(f) loadFromFile(f);
-  });
-
-  toggleAllBtn.addEventListener('click', ()=>{
-    const date = targetDateEl.value;
-    const boxes = qsa('tbody td.opscell input[type="checkbox"]');
-    const allOn = boxes.length && boxes.every(b=>b.checked);
-    const map = loadState(date);
-    boxes.forEach(b=>{
-      const id = b.dataset.id;
-      const newState = !allOn;
-      b.checked = newState;
-      map[id] = {checked: newState ? 1 : 0, completed_at: newState ? nowISOWithTZ() : ''};
-      const idx = currentRows.findIndex(x=>x.id===id);
-      if(idx>=0){
-        currentRows[idx].checked = map[id].checked;
-        currentRows[idx].completed_at = map[id].completed_at;
-      }
-    });
-    saveState(date, map);
-    currentRows = sortRowsForDisplay(currentRows);
-    renderRows(date, currentRows);
-  });
-
-  clearChecksBtn.addEventListener('click', ()=>{
-    const date = targetDateEl.value;
-    localStorage.removeItem(storageKey(date));
-    qsa('tbody td.opscell input[type="checkbox"]').forEach(b=> b.checked = false);
-    currentRows.forEach(r=>{ r.checked = 0; r.completed_at=''; });
-    currentRows = sortRowsForDisplay(currentRows);
-    renderRows(date, currentRows);
   });
 
   shareBtn.addEventListener('click', ()=>{
