@@ -1,0 +1,4 @@
+# サンプル（A: 手書き形式）
+07:30, ゴミ出し, https://maps.app.goo.gl/xxxxxx
+09:00, 郵便局へ,
+10:30	タイヤ交換予約	https://maps.google.com/?q=タイヤ館

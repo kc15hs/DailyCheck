@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DailyCheck</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="container">
+    <h1>DailyCheck（日次チェックリスト）</h1>
+    <div class="controls">
+      <label>対象日：<input type="date" id="targetDate"></label>
+      <div class="file-area">
+        <input type="file" id="fileInput" accept=".txt,.csv" />
+        <button id="shareBtn" type="button">共有</button>
+      </div>
+    </div>
+    <details class="hint">
+      <summary>入力ファイルの書式</summary>
+      <div class="formats">
+        <div>
+          <h4>A) 手書きCSV/TXT（ヘッダー無し）</h4>
+          <pre>07:30, ゴミ出し, https://maps.app.goo.gl/xxxxx
+09:00, 銀行へ,
+10:30	タイヤ交換予約	https://maps.google.com/?q=タイヤ館</pre>
+        </div>
+        <div>
+          <h4>B) アプリ出力CSV（ヘッダー有り）</h4>
+          <pre>checked,planned_time,completed_at,task,url
+1,07:30,2025-08-27T07:41:05+09:00,ゴミ出し,https://maps.app.goo.gl/xxxxx</pre>
+        </div>
+      </div>
+    </details>
+  </header>
+
+  <main class="container">
+    <div class="toolbar">
+      <button id="toggleAll">全選択</button>
+      <button id="clearChecks" class="secondary">本日のチェックを全クリア</button>
+      <span id="summary" class="summary">0 / 0 完了</span>
+    </div>
+
+    <div class="table-wrap">
+      <table id="taskTable" aria-label="チェックリスト">
+        <thead>
+          <tr>
+            <th class="col-ops">操作</th>
+            <th class="col-time">時間</th>
+            <th class="col-task">要件</th>
+            <th class="col-url">リンク</th>
+          </tr>
+        </thead>
+        <tbody id="taskBody"></tbody>
+      </table>
+      <p id="emptyMessage" class="empty">左上から .txt / .csv を読み込んでください。</p>
+    </div>
+  </main>
+
+  <footer class="container foot">
+    <small>チェック状態と完了時間は「対象日」ごとに保存されます。</small>
+  </footer>
+
+  <dialog id="shareDialog">
+    <form method="dialog" class="share-form">
+      <h3>共有</h3>
+      <p>進捗をファイルに保存します。</p>
+      <menu>
+        <button value="cancel" class="secondary">閉じる</button>
+        <button id="exportCsvBtn" value="ok">ファイルに保存</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
