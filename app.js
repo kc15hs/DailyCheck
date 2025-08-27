@@ -76,19 +76,14 @@ const toDate = s => {
 
 // ==== 並べ替えキー：実行時刻があればそれ、無ければ予定時刻、どちらも無ければ最後 ====
 function keyTimeMillis(row){
-  // 1) completed_at（ISO）優先
   const cd = toDate(row.completed_at);
   if(cd) return cd.getTime();
-
-  // 2) planned_time（HH:MM）を「本日」のミリ秒に
   if(row.planned_time){
     const [hh, mm] = row.planned_time.split(':').map(Number);
     const d = new Date();
     d.setHours(hh||0, mm||0, 0, 0);
     return d.getTime();
   }
-
-  // 3) 無し
   return null;
 }
 
@@ -98,10 +93,10 @@ function sortRowsForDisplay(rows){
     .sort((a,b)=>{
       const ak = keyTimeMillis(a);
       const bk = keyTimeMillis(b);
-      if(ak!=null && bk!=null) return ak - bk; // 両方キーあり → 昇順
-      if(ak!=null) return -1;                  // 片方のみキーあり → そちらを先
+      if(ak!=null && bk!=null) return ak - bk;
+      if(ak!=null) return -1;
       if(bk!=null) return 1;
-      return a._idx - b._idx;                  // どちらも無し → 元順
+      return a._idx - b._idx;
     });
 }
 
@@ -171,6 +166,17 @@ function detectAndParse(text){
   return parseUserFormat(text);
 }
 
+// ISO日時文字列 → ローカルYYYY-MM-DD
+function isoToLocalDateStr(iso){
+  const d = toDate(iso);
+  if(!d) return '';
+  const pad = n => String(n).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth()+1);
+  const dd = pad(d.getDate());
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function mergeWithLocal(rows, date){
   const state = loadState(date); // key -> {checked, completed_at}
   const merged = rows.map(r=>{
@@ -189,7 +195,6 @@ function mergePreferAppCSV(rows, date){
   rows.forEach(r=>{
     mergedState[r.id] = {checked: r.checked, completed_at: r.completed_at};
   });
-  // keep any local-only rows too
   Object.keys(state).forEach(id=>{
     if(!mergedState[id]) mergedState[id] = state[id];
   });
@@ -222,14 +227,11 @@ function renderRows(date, rows){
     delBtn.textContent = '🗑';
     delBtn.addEventListener('click', ()=>{
       const dateKey = targetDateEl.value;
-      // localStorage から削除
       const st = loadState(dateKey);
       delete st[row.id];
       saveState(dateKey, st);
-      // currentRows から削除
       const idx = currentRows.findIndex(x=>x.id===row.id);
       if(idx>=0) currentRows.splice(idx, 1);
-      // 並び替え & 再描画
       currentRows = sortRowsForDisplay(currentRows);
       renderRows(dateKey, currentRows);
     });
@@ -244,17 +246,14 @@ function renderRows(date, rows){
       if(cb.checked){
         st[row.id] = {checked:1, completed_at: nowISOWithTZ()};
       }else{
-        // ③ チェックOFF時、実行時刻もクリア
-        st[row.id] = {checked:0, completed_at:''};
+        st[row.id] = {checked:0, completed_at:''}; // OFF時は実行時刻クリア
       }
       saveState(date, st);
-      // モデル更新
       const idx = currentRows.findIndex(x=>x.id===row.id);
       if(idx>=0){
         currentRows[idx].checked = st[row.id].checked;
         currentRows[idx].completed_at = st[row.id].completed_at;
       }
-      // ③ 動的並べ替え
       currentRows = sortRowsForDisplay(currentRows);
       renderRows(date, currentRows);
     });
@@ -304,28 +303,36 @@ function loadFromFile(file){
     const parsed = detectAndParse(text);
     const fromAppCSV = looksLikeAppHeader((text.split(/\r?\n/)[0]||''));
     if(fromAppCSV){
-      // アプリ出力CSVの場合：CSV側（チェック/完了時刻）を採用してローカル状態を置換
       mergePreferAppCSV(parsed, targetDateEl.value);
       currentRows = parsed;
     }else{
-      // 手書き入力の場合：既存ローカル状態を優先して反映
       currentRows = mergeWithLocal(parsed, targetDateEl.value);
     }
-    // 表示用の並びを最終確定
+
+    // ★ completed_at がある場合は、最も新しい実行日(ローカル日付)を対象日に反映
+    const execDates = currentRows
+      .map(r => r.completed_at)
+      .filter(Boolean)
+      .map(isoToLocalDateStr)
+      .filter(Boolean);
+    if(execDates.length){
+      const mostRecent = execDates.sort().at(-1); // 文字列YYYY-MM-DDは辞書順でOK
+      if(mostRecent) targetDateEl.value = mostRecent;
+    }
+
     currentRows = sortRowsForDisplay(currentRows);
     renderRows(targetDateEl.value, currentRows);
   };
   reader.readAsText(file, 'utf-8');
 }
 
-function exportCSV(){
+// ★ 同名上書き保存（対応ブラウザはFile System Access APIを使用）
+async function exportCSV(){
   const date = targetDateEl.value;
   const st = loadState(date);
-  // DOMの行順で出力（削除済み行はDOMにないので除外）
   const rows = [];
   qsa('#taskBody tr').forEach(tr=>{
     const tds = qsa('td', tr);
-    // 列順： [0]=操作, [1]=実行, [2]=予定, [3]=要件, [4]=リンク
     const planned = tds[2].textContent==='—' ? '' : tds[2].textContent;
     const task    = tds[3].textContent==='—' ? '' : tds[3].textContent;
     const linkEl  = qs('a', tds[4]);
@@ -345,7 +352,7 @@ function exportCSV(){
   let csv = 'checked,planned_time,completed_at,task,url\n';
   csv += rows.map(r=>[r.checked, r.planned_time, r.completed_at, r.task, r.url].map(v=>String(v||'')).join(',')).join('\n');
 
-  // ファイル名：DailyCheck‗yymmdd.csv
+  // ファイル名：DailyCheck‗YYMMDD.csv（対象日ベース）
   const d  = new Date(date+'T00:00:00');
   const yy = String(d.getFullYear()).slice(-2);
   const mm = String(d.getMonth()+1).padStart(2,'0');
@@ -353,6 +360,26 @@ function exportCSV(){
   const filename = `DailyCheck‗${yy}${mm}${dd}.csv`;
 
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+
+  // File System Access API が使える場合は同名上書き（末尾番号は付かない）
+  if('showSaveFilePicker' in window){
+    try{
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }],
+        excludeAcceptAllOption: false
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    }catch(e){
+      // ユーザーがキャンセル等した場合は何もしない（フォールバックしない）
+      return;
+    }
+  }
+
+  // フォールバック（環境により末尾番号が付く可能性あり）
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
@@ -389,7 +416,6 @@ window.addEventListener('DOMContentLoaded', ()=>{
       }
     });
     saveState(date, map);
-    // 並べ替え & 再描画
     currentRows = sortRowsForDisplay(currentRows);
     renderRows(date, currentRows);
   });
@@ -399,7 +425,6 @@ window.addEventListener('DOMContentLoaded', ()=>{
     localStorage.removeItem(storageKey(date));
     qsa('tbody td.opscell input[type="checkbox"]').forEach(b=> b.checked = false);
     currentRows.forEach(r=>{ r.checked = 0; r.completed_at=''; });
-    // 並べ替え & 再描画
     currentRows = sortRowsForDisplay(currentRows);
     renderRows(date, currentRows);
   });
@@ -411,9 +436,9 @@ window.addEventListener('DOMContentLoaded', ()=>{
       exportCSV();
     }
   });
-  exportCsvBtn?.addEventListener('click', (e)=>{
+  exportCsvBtn?.addEventListener('click', async (e)=>{
     e.preventDefault();
-    exportCSV();
+    await exportCSV();
     shareDialog.close();
   });
 
@@ -432,7 +457,6 @@ window.addEventListener('DOMContentLoaded', ()=>{
         currentRows[idx].completed_at = (local && local.completed_at) || '';
       }
     });
-    // 並べ替え & 再描画
     currentRows = sortRowsForDisplay(currentRows);
     renderRows(date, currentRows);
   });
