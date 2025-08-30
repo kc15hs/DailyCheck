@@ -13,10 +13,13 @@ const exportCsvBtn  = qs('#exportCsvBtn');
 const toggleCompletedBtn = qs('#toggleCompletedVisibility');
 const sortModeBtn   = qs('#sortModeBtn');
 
-// 表示トグル：デフォルトは「チェック済みを非表示」
+// 表示トグル：初期は「全データ表示（チェック済みも表示）」＝オン
 let showCompleted = true;
 // 並び順モード：'auto'（実行→予定→無し） / 'planned'（予定のみ）
 let sortMode = 'auto';
+
+// ファイル名から対象日を設定できたかのフラグ（できたらCSV中の最新実行日で上書きしない）
+let dateFromFilenameSet = false;
 
 function updateToggleBtnLabel(){
   if(toggleCompletedBtn){
@@ -37,17 +40,12 @@ function todayISO(){
   const local = new Date(d.getTime() - tz*60000);
   return local.toISOString().slice(0,10);
 }
-function storageKey(date){ return `dailycheck:${date}`; }
 
-// === ローカル保存・復元を無効化 ===
-function loadState(/* date */){
-  return {};
-}
-function saveState(/* date, obj */){
-  return;
-}
+// === ローカル保存・復元は使わない（no-op） ===
+function loadState(){ return {}; }
+function saveState(){ return; }
 
-// 現在時刻をISO形式で取得
+// 現在時刻をISO（ローカルTZ）で取得
 function nowISOWithTZ(){
   const d = new Date();
   const pad = n => String(n).padStart(2,'0');
@@ -64,12 +62,12 @@ function nowISOWithTZ(){
   return `${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}${sign}${oh}:${om}`;
 }
 
-// 時刻の正規化＋ループ保持対応
+// 時刻の正規化＋LOOP保持
 function normalizeTime(s){
   if(s==null) return '';
   let t = String(s).trim();
   if(t==='') return '';
-  // ★ LOOP / ループはそのまま保持
+  // LOOP / ループ はそのまま保持（内部表記は 'LOOP' に統一）
   if (t.toUpperCase() === 'LOOP' || t === 'ループ') return 'LOOP';
 
   const m = t.match(/^(\d{1,2})(?::?(\d{1,2}))?$/);
@@ -224,6 +222,7 @@ function renderRows(date, rows){
     const tdOps = document.createElement('td');
     tdOps.className = 'opscell';
 
+    // 削除
     const delBtn = document.createElement('button');
     delBtn.type = 'button';
     delBtn.className = 'delbtn';
@@ -236,6 +235,7 @@ function renderRows(date, rows){
       renderRows(targetDateEl.value, currentRows);
     });
 
+    // チェックボックス
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.dataset.id = row.id;
@@ -246,13 +246,13 @@ function renderRows(date, rows){
       const idx = currentRows.findIndex(x=>x.id===row.id);
       if(idx<0) return;
 
-      const isLoop = currentRows[idx].planned_time.toUpperCase() === 'LOOP';
+      const isLoop = (currentRows[idx].planned_time||'').toUpperCase() === 'LOOP';
 
       if (isLoop && cb.checked) {
-        // 原本は未チェックのまま残す
+        // 原本は未チェックのまま残す（UIも戻す）
         cb.checked = false;
 
-        // 複製作成
+        // 複製作成（実行記録）
         const nowIso = nowISOWithTZ();
         const d = new Date();
         const pad = n => String(n).padStart(2,'0');
@@ -260,12 +260,12 @@ function renderRows(date, rows){
 
         const copy = {
           ...currentRows[idx],
-          planned_time: hhmm,
+          planned_time: hhmm,     // 実行時刻を予定欄へ（ID差別化にも使う）
           checked: 1,
           completed_at: nowIso,
           _idx: currentRows.length
         };
-        // ★ 複製IDは必ずユニーク
+        // 複製IDは必ずユニーク
         copy.id = `LOOP_${currentRows[idx].task}_${hhmm}_${Date.now()}`;
 
         currentRows.push(copy);
@@ -299,6 +299,7 @@ function renderRows(date, rows){
       tdUrl.textContent = '—'; tdUrl.style.color = '#778';
     }
 
+    // 表示トグル（showCompleted=false のときはチェック済みを隠す）
     if(!showCompleted && row.checked){
       tr.style.display = 'none';
     }
@@ -325,23 +326,31 @@ function loadFromFile(file){
 
     currentRows = parsed;
 
-    const execDates = currentRows
-      .map(r => r.completed_at)
-      .filter(Boolean)
-      .map(isoToLocalDateStr)
-      .filter(Boolean);
-    if(execDates.length){
-      const mostRecent = execDates.sort().at(-1);
-      if(mostRecent) targetDateEl.value = mostRecent;
+    // ファイル名から対象日がセットされていない場合のみ、CSVの最新実行日で補完
+    if(!dateFromFilenameSet){
+      const execDates = currentRows
+        .map(r => r.completed_at)
+        .filter(Boolean)
+        .map(isoToLocalDateStr)
+        .filter(Boolean);
+      if(execDates.length){
+        const mostRecent = execDates.sort().at(-1);
+        if(mostRecent) targetDateEl.value = mostRecent;
+      }
     }
 
+    // 並べ替え＆描画
     currentRows = sortRowsForDisplay(currentRows);
     renderRows(targetDateEl.value, currentRows);
+
+    // 次回に影響しないようフラグはクリア
+    dateFromFilenameSet = false;
   };
   reader.readAsText(file, 'utf-8');
 }
 
 async function exportCSV(){
+  // 出力ファイル名は「現在選択中のファイル名」をそのまま使用
   let filename = 'DailyCheck.csv';
   if (fileInput.files && fileInput.files.length > 0) {
     filename = fileInput.files[0].name;
@@ -350,7 +359,8 @@ async function exportCSV(){
   const rows = [];
   qsa('#taskBody tr').forEach(tr=>{
     const tds   = qsa('td', tr);
-    const planned = tds[2].textContent==='—' ? '' : tds[2].textContent;
+    // 列順：[0]=操作, [1]=実行, [2]=予定, [3]=要件, [4]=リンク
+    const planned = tds[2].textContent==='—' ? '' : tds[2].textContent; // LOOP もそのまま出力
     const task    = tds[3].textContent==='—' ? '' : tds[3].textContent;
     const linkEl  = qs('a', tds[4]);
     const url     = linkEl ? linkEl.getAttribute('href') : '';
@@ -360,7 +370,7 @@ async function exportCSV(){
 
     rows.push({
       checked: cb.checked ? 1 : 0,
-      planned_time: planned,  // LOOPはそのまま出力
+      planned_time: planned,
       completed_at: row.completed_at || '',
       task,
       url,
@@ -401,9 +411,10 @@ async function exportCSV(){
 
 // ==== イベント ====
 window.addEventListener('DOMContentLoaded', ()=>{
-  targetDateEl.value = todayISO();
+  // 初期表示：全データ表示（オン）
   updateToggleBtnLabel();
   updateSortModeBtnLabel();
+  targetDateEl.value = todayISO();
 
   toggleCompletedBtn?.addEventListener('click', ()=>{
     showCompleted = !showCompleted;
@@ -418,9 +429,25 @@ window.addEventListener('DOMContentLoaded', ()=>{
     renderRows(targetDateEl.value, currentRows);
   });
 
+  // ファイル選択時：まずファイル名からYYMMDDを拾って対象日に設定（拾えなければスキップ）
   fileInput.addEventListener('change', ()=>{
     const f = fileInput.files?.[0];
-    if(f) loadFromFile(f);
+    if(f){
+      const name = f.name;
+      // 例）abc_250831_予定.csv → '_'区切りで2番目が YYMMDD
+      const parts = name.split('_');
+      if (parts.length >= 2) {
+        const dateStr = parts[1];
+        if (/^\d{6}$/.test(dateStr)) {
+          const yy = dateStr.slice(0,2);
+          const mm = dateStr.slice(2,4);
+          const dd = dateStr.slice(4,6);
+          targetDateEl.value = `20${yy}-${mm}-${dd}`;
+          dateFromFilenameSet = true;
+        }
+      }
+      loadFromFile(f);
+    }
   });
 
   shareBtn.addEventListener('click', ()=>{
