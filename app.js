@@ -14,8 +14,8 @@ const toggleCompletedBtn = qs('#toggleCompletedVisibility');
 const sortModeBtn   = qs('#sortModeBtn');
 
 // 表示トグル：デフォルトは「チェック済みを非表示」
-let showCompleted = false;
-// 並び順モード：'auto'（実行→予定→無し） / 'planned'（予定時刻のみ）
+let showCompleted = true;
+// 並び順モード：'auto'（実行→予定→無し） / 'planned'（予定のみ）
 let sortMode = 'auto';
 
 function updateToggleBtnLabel(){
@@ -39,15 +39,15 @@ function todayISO(){
 }
 function storageKey(date){ return `dailycheck:${date}`; }
 
-function loadState(date){
-  try{ return JSON.parse(localStorage.getItem(storageKey(date))||'{}'); }
-  catch{ return {}; }
+// === ローカル保存・復元を無効化 ===
+function loadState(/* date */){
+  return {};
 }
-function saveState(date, obj){
-  localStorage.setItem(storageKey(date), JSON.stringify(obj||{}));
+function saveState(/* date, obj */){
+  return;
 }
 
-// local ISO8601 with timezone offset (e.g., 2025-08-27T16:42:10+09:00)
+// 現在時刻をISO形式で取得
 function nowISOWithTZ(){
   const d = new Date();
   const pad = n => String(n).padStart(2,'0');
@@ -57,18 +57,21 @@ function nowISOWithTZ(){
   const HH = pad(d.getHours());
   const MM = pad(d.getMinutes());
   const SS = pad(d.getSeconds());
-  const off = -d.getTimezoneOffset(); // minutes
+  const off = -d.getTimezoneOffset();
   const sign = off >= 0 ? '+' : '-';
   const oh = pad(Math.floor(Math.abs(off)/60));
   const om = pad(Math.abs(off)%60);
   return `${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}${sign}${oh}:${om}`;
 }
 
+// 時刻の正規化＋ループ保持対応
 function normalizeTime(s){
   if(s==null) return '';
   let t = String(s).trim();
   if(t==='') return '';
-  // accept '730', '7:3', '07:30'
+  // ★ LOOP / ループはそのまま保持
+  if (t.toUpperCase() === 'LOOP' || t === 'ループ') return 'LOOP';
+
   const m = t.match(/^(\d{1,2})(?::?(\d{1,2}))?$/);
   if(!m) return '';
   let hh = parseInt(m[1],10);
@@ -92,12 +95,11 @@ const toDate = s => {
   return isNaN(d.getTime()) ? null : d;
 };
 
-// === 並べ替えユーティリティ ===
+// === 並べ替え ===
 function keyTimeMillis(row){
-  // 実行時刻があればそれを優先、無ければ予定時刻、どちらも無ければ null
   const cd = toDate(row.completed_at);
   if(cd) return cd.getTime();
-  if(row.planned_time){
+  if(row.planned_time && row.planned_time !== 'LOOP'){
     const [hh, mm] = row.planned_time.split(':').map(Number);
     const d = new Date();
     d.setHours(hh||0, mm||0, 0, 0);
@@ -118,10 +120,10 @@ function compareAuto(a,b){
 function comparePlanned(a,b){
   const at = a.planned_time || '';
   const bt = b.planned_time || '';
-  if(at && bt) return at.localeCompare(bt); // HH:MM 文字列昇順
+  if(at && bt) return at.localeCompare(bt);
   if(at && !bt) return -1;
   if(!at && bt) return 1;
-  return a._idx - b._idx; // どちらも無し → 元順
+  return a._idx - b._idx;
 }
 
 function sortRowsForDisplay(rows){
@@ -130,7 +132,7 @@ function sortRowsForDisplay(rows){
 }
 
 // ==== 読み込み ====
-let currentRows = []; // [{planned_time, task, url, checked, completed_at, id, _idx}]
+let currentRows = [];
 
 function parseUserFormat(text){
   const rows = [];
@@ -205,30 +207,6 @@ function isoToLocalDateStr(iso){
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function mergeWithLocal(rows, date){
-  const state = loadState(date); // key -> {checked, completed_at}
-  const merged = rows.map(r=>{
-    const local = state[r.id];
-    if(local){
-      return {...r, checked: local.checked ?? r.checked, completed_at: local.completed_at ?? r.completed_at};
-    }
-    return r;
-  });
-  return sortRowsForDisplay(merged);
-}
-
-function mergePreferAppCSV(rows, date){
-  const state = loadState(date);
-  const mergedState = {};
-  rows.forEach(r=>{
-    mergedState[r.id] = {checked: r.checked, completed_at: r.completed_at};
-  });
-  Object.keys(state).forEach(id=>{
-    if(!mergedState[id]) mergedState[id] = state[id];
-  });
-  saveState(date, mergedState);
-}
-
 // ==== 表示ユーティリティ ====
 function hhmmFromISO(iso){
   const d = toDate(iso);
@@ -243,64 +221,75 @@ function renderRows(date, rows){
   rows.forEach(row=>{
     const tr = document.createElement('tr');
 
-    // 1列目：操作（🗑 + ✔）
     const tdOps = document.createElement('td');
     tdOps.className = 'opscell';
 
-    // 削除ボタン
     const delBtn = document.createElement('button');
     delBtn.type = 'button';
     delBtn.className = 'delbtn';
     delBtn.setAttribute('aria-label', 'この行を削除');
     delBtn.textContent = '🗑';
     delBtn.addEventListener('click', ()=>{
-      const dateKey = targetDateEl.value;
-      const st = loadState(dateKey);
-      delete st[row.id];
-      saveState(dateKey, st);
       const idx = currentRows.findIndex(x=>x.id===row.id);
       if(idx>=0) currentRows.splice(idx, 1);
       currentRows = sortRowsForDisplay(currentRows);
-      renderRows(dateKey, currentRows);
+      renderRows(targetDateEl.value, currentRows);
     });
 
-    // チェックボックス
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.dataset.id = row.id;
     cb.checked = !!row.checked;
+
+    // === チェックイベント ===
     cb.addEventListener('change', ()=>{
-      const st = loadState(date);
-      if(cb.checked){
-        st[row.id] = {checked:1, completed_at: nowISOWithTZ()};
-      }else{
-        st[row.id] = {checked:0, completed_at:''}; // OFF時は実行時刻クリア
-      }
-      saveState(date, st);
       const idx = currentRows.findIndex(x=>x.id===row.id);
-      if(idx>=0){
-        currentRows[idx].checked = st[row.id].checked;
-        currentRows[idx].completed_at = st[row.id].completed_at;
+      if(idx<0) return;
+
+      const isLoop = currentRows[idx].planned_time.toUpperCase() === 'LOOP';
+
+      if (isLoop && cb.checked) {
+        // 原本は未チェックのまま残す
+        cb.checked = false;
+
+        // 複製作成
+        const nowIso = nowISOWithTZ();
+        const d = new Date();
+        const pad = n => String(n).padStart(2,'0');
+        const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+        const copy = {
+          ...currentRows[idx],
+          planned_time: hhmm,
+          checked: 1,
+          completed_at: nowIso,
+          _idx: currentRows.length
+        };
+        // ★ 複製IDは必ずユニーク
+        copy.id = `LOOP_${currentRows[idx].task}_${hhmm}_${Date.now()}`;
+
+        currentRows.push(copy);
+      } else {
+        // 通常行
+        currentRows[idx].checked = cb.checked ? 1 : 0;
+        currentRows[idx].completed_at = cb.checked ? nowISOWithTZ() : '';
       }
+
       currentRows = sortRowsForDisplay(currentRows);
-      renderRows(date, currentRows);
+      renderRows(targetDateEl.value, currentRows);
     });
 
     tdOps.append(delBtn, cb);
 
-    // 2列目：実行時刻
     const tdExec = document.createElement('td');
     tdExec.textContent = hhmmFromISO(row.completed_at);
 
-    // 3列目：予定時刻
     const tdTime = document.createElement('td');
     tdTime.textContent = row.planned_time || '—';
 
-    // 4列目：要件
     const tdTask = document.createElement('td');
     tdTask.textContent = row.task || '—';
 
-    // 5列目：リンク
     const tdUrl = document.createElement('td');
     if(row.url){
       const a = document.createElement('a');
@@ -310,7 +299,6 @@ function renderRows(date, rows){
       tdUrl.textContent = '—'; tdUrl.style.color = '#778';
     }
 
-    // チェック済み非表示（保存やCSVには影響しない）
     if(!showCompleted && row.checked){
       tr.style.display = 'none';
     }
@@ -334,15 +322,9 @@ function loadFromFile(file){
   reader.onload = e=>{
     const text = String(e.target.result||'');
     const parsed = detectAndParse(text);
-    const fromAppCSV = looksLikeAppHeader((text.split(/\r?\n/)[0]||''));
-    if(fromAppCSV){
-      mergePreferAppCSV(parsed, targetDateEl.value);
-      currentRows = parsed;
-    }else{
-      currentRows = mergeWithLocal(parsed, targetDateEl.value);
-    }
 
-    // 実行時刻があれば、もっとも新しい実行日を対象日に反映
+    currentRows = parsed;
+
     const execDates = currentRows
       .map(r => r.completed_at)
       .filter(Boolean)
@@ -360,39 +342,37 @@ function loadFromFile(file){
 }
 
 async function exportCSV(){
-  const date = targetDateEl.value;
-  const st = loadState(date);
+  let filename = 'DailyCheck.csv';
+  if (fileInput.files && fileInput.files.length > 0) {
+    filename = fileInput.files[0].name;
+  }
+
   const rows = [];
   qsa('#taskBody tr').forEach(tr=>{
-    const tds = qsa('td', tr);
-    // 列順：[0]=操作, [1]=実行, [2]=予定, [3]=要件, [4]=リンク
+    const tds   = qsa('td', tr);
     const planned = tds[2].textContent==='—' ? '' : tds[2].textContent;
     const task    = tds[3].textContent==='—' ? '' : tds[3].textContent;
     const linkEl  = qs('a', tds[4]);
     const url     = linkEl ? linkEl.getAttribute('href') : '';
     const cb      = qs('input[type="checkbox"]', tds[0]);
     const id      = cb.dataset.id;
-    const state   = st[id] || {checked:0, completed_at:''};
+    const row     = currentRows.find(r=>r.id===id) || {completed_at:''};
+
     rows.push({
-      checked: state.checked ? 1 : 0,
-      planned_time: planned,
-      completed_at: state.completed_at || '',
+      checked: cb.checked ? 1 : 0,
+      planned_time: planned,  // LOOPはそのまま出力
+      completed_at: row.completed_at || '',
       task,
       url,
     });
   });
 
   let csv = 'checked,planned_time,completed_at,task,url\n';
-  csv += rows.map(r=>[r.checked, r.planned_time, r.completed_at, r.task, r.url].map(v=>String(v||'')).join(',')).join('\n');
-
-  // ファイル名：DailyCheck‗YYMMDD.csv（対象日ベース）
-  const d  = new Date(date+'T00:00:00');
-  const yy = String(d.getFullYear()).slice(-2);
-  const mm = String(d.getMonth()+1).padStart(2,'0');
-  const dd = String(d.getDate()).padStart(2,'0');
-  const filename = `DailyCheck‗${yy}${mm}${dd}.csv`;
+  csv += rows.map(r=>[r.checked, r.planned_time, r.completed_at, r.task, r.url]
+    .map(v=>String(v||'')).join(',')).join('\n');
 
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+
   if('showSaveFilePicker' in window){
     try{
       const handle = await window.showSaveFilePicker({
@@ -405,9 +385,10 @@ async function exportCSV(){
       await writable.close();
       return;
     }catch(e){
-      return; // キャンセル時などはフォールバックもしない（番号付与回避）
+      return;
     }
   }
+
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
@@ -455,22 +436,8 @@ window.addEventListener('DOMContentLoaded', ()=>{
     shareDialog.close();
   });
 
-  // 日付変更：既存の保存状態を適用
   targetDateEl.addEventListener('change', ()=>{
-    const date = targetDateEl.value;
-    const st = loadState(date);
-    qsa('#taskBody tr').forEach(tr=>{
-      const cb = qs('td.opscell input[type="checkbox"]', tr);
-      const id = cb.dataset.id;
-      const local = st[id];
-      cb.checked = !!(local && local.checked);
-      const idx = currentRows.findIndex(x=>x.id===id);
-      if(idx>=0){
-        currentRows[idx].checked = cb.checked ? 1 : 0;
-        currentRows[idx].completed_at = (local && local.completed_at) || '';
-      }
-    });
     currentRows = sortRowsForDisplay(currentRows);
-    renderRows(date, currentRows);
+    renderRows(targetDateEl.value, currentRows);
   });
 });
