@@ -1,12 +1,16 @@
 :root{
   --bg:#0b0c10;
   --card:#15171c;
-  --ink:#e8e8ea;
+  --ink:#e8e8ea;      /* 通常文字色（明るめ）*/
   --muted:#a6a8ad;
   --accent:#4da3ff;
   --ok:#2ecc71;
   --border:#24262d;
   --shadow:0 6px 24px rgba(0,0,0,.25);
+
+  /* Hover時の反転用 */
+  --hover-ink:#ffffff;
+  --hover-bg:#0f1420;
 }
 
 /* ===== Base ===== */
@@ -21,7 +25,7 @@ body{
 .container{width:min(1100px,92vw);margin-inline:auto;padding:16px}
 
 /* ===== Header / Controls ===== */
-header h1{margin:0 0 12px;font-size:1.5rem}
+header h1{margin:0 0 12px;font-size:1.5rem;color:var(--ink)}
 .controls{
   display:flex;gap:16px;flex-wrap:wrap;align-items:center;
   background:var(--card);border:1px solid var(--border);border-radius:16px;
@@ -41,62 +45,77 @@ button{
 button.secondary{background:#1d2330;color:var(--ink)}
 button:active{transform:translateY(1px)}
 
-/* ===== Hints ===== */
-.hint{
-  margin-top:10px;background:#0f1218;border:1px solid var(--border);
-  border-radius:12px;padding:8px 10px;color:var(--muted);
-}
-.hint .formats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.hint pre{white-space:pre-wrap;margin:8px 0 0}
-
 /* ===== Toolbar ===== */
 .toolbar{display:flex;gap:10px;align-items:center;margin:16px 0 8px}
+.summary{margin-left:auto;color:var(--ink);font-weight:700}
 
-/* ===== Table ===== */
+/* ===== Table Wrapper ===== */
 .table-wrap{
   background:var(--card);border:1px solid var(--border);border-radius:16px;
   box-shadow:var(--shadow);overflow:auto;
+  -webkit-overflow-scrolling:touch;       /* iOS慣性 */
+  max-height:70vh;
 }
+
+/* ===== Table ===== */
 table{
   border-collapse:separate;border-spacing:0;width:100%;
-  min-width:820px; /* 実行時刻列追加に合わせて拡張 */
+  min-width:820px;
+  table-layout:fixed;                     /* 列幅安定 */
 }
+
+/* Header (縦固定) */
 thead th{
-  position:sticky;top:0;background:#12161e;color:var(--muted);
-  text-align:left;font-weight:600;letter-spacing:.02em;border-bottom:1px solid var(--border);
-  padding:10px 12px;white-space:nowrap;
+  position:-webkit-sticky; position:sticky; top:0;
+  background:#12161e; color:var(--muted);
+  text-align:left; font-weight:600; letter-spacing:.02em;
+  border-bottom:1px solid var(--border);
+  padding:10px 12px; white-space:nowrap;
+  z-index:3;                               /* 明細より上 */
+  background-clip:padding-box;
 }
+
+/* Body cells */
 tbody td{
   border-bottom:1px solid var(--border);
-  padding:10px 12px;vertical-align:middle;
+  padding:10px 12px; vertical-align:middle; color:var(--ink);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
-tbody tr:hover{background:#141923}
+
+/* 行ホバー：背景を少し濃く */
+tbody tr:hover{ background:#141923 }
 
 /* ===== Column widths ===== */
 .col-ops{
-  width:72px; min-width:72px;
+  width:140px; min-width:140px;           /* 明示幅（iOSのsticky安定）*/
   text-align:center; white-space:nowrap;
 }
-.col-exec{width:110px; min-width:110px; white-space:nowrap}
-.col-time{width:110px; min-width:110px; white-space:nowrap}
-.col-url{width:140px; min-width:140px; white-space:nowrap}
+.col-exec{width:120px; min-width:120px; white-space:nowrap}
+.col-time{width:120px; min-width:120px; white-space:nowrap}
+.col-url{ width:140px; min-width:140px; white-space:nowrap}
 .col-task{width:auto}
 
-/* ===== Cells ===== */
-.opscell{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:6px;
+/* ===== Sticky 1st Column (横固定) ===== */
+th.col-ops{
+  position:-webkit-sticky; position:sticky;
+  left:0; top:0;                           /* ヘッダーは縦横固定 */
+  background:#161b24;                      /* 不透明背景 */
+  z-index:4;                               /* 他thより前面 */
+}
+td.opscell{
+  position:-webkit-sticky; position:sticky;
+  left:0;                                  /* 横固定 */
+  background:#151a22;                      /* 不透明背景 */
+  z-index:2;                               /* ヘッダーより下 */
+  display:flex; align-items:center; justify-content:center; gap:6px;
   white-space:nowrap;
 }
 
+/* 操作セル内のUI */
 .opscell input[type="checkbox"]{
-  width:22px; height:22px;
-  accent-color:var(--ok);
-  cursor:pointer;
+  width:22px; height:22px; accent-color:var(--ok); cursor:pointer;
+  transform:translateZ(0);                  /* 合成レイヤ確保（iOS安定化）*/
 }
-
 .delbtn{
   display:inline-flex;align-items:center;justify-content:center;
   width:32px;height:32px;border-radius:8px;
@@ -106,20 +125,28 @@ tbody tr:hover{background:#141923}
 }
 .delbtn:active{transform:translateY(1px)}
 
-.link{
-  display:inline-flex;align-items:center;gap:6px;
-  text-decoration:none;color:var(--accent);font-weight:600;
-}
+/* リンク */
+.link{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--accent);font-weight:600}
 .link:focus-visible,.link:hover{text-decoration:underline}
+
+/* ===== Hover/Focus: 文字は白、背景を濃色に反転 ===== */
+thead th:hover,
+thead th:focus-visible,
+tbody td:hover,
+tbody td:focus-visible{
+  color:var(--hover-ink);
+  background:var(--hover-bg);
+}
+td.opscell:hover,
+td.opscell:focus-within{
+  color:var(--hover-ink);
+  background:var(--hover-bg);
+  z-index:3; /* 反転時に周辺より優先表示 */
+}
 
 /* ===== Misc ===== */
 .empty{margin:0;padding:14px;color:var(--muted)}
 .foot{color:var(--muted);text-align:center;padding-bottom:32px}
-
-/* ===== Responsive ===== */
-@media (max-width:720px){
-  .hint .formats{grid-template-columns:1fr}
-}
 
 /* ===== Dialog ===== */
 dialog::backdrop{background:rgba(0,0,0,.35)}
@@ -132,4 +159,10 @@ dialog{
 .share-form menu{
   display:flex;gap:10px;justify-content:flex-end;
   margin:12px 0 0;padding:0
+}
+
+/* ===== Responsive ===== */
+@media (max-width:720px){
+  /* 余白を少し締める */
+  .col-task{min-width:240px}
 }
