@@ -16,7 +16,7 @@
 html,body{height:100%}
 body{
   margin:0;
-  overflow-x:hidden;                      /* ページ側の横スクロールを禁止 */
+  overflow-x:hidden;                      /* ページ側の横スクロールは殺す */
   background:linear-gradient(180deg,#0b0c10,#0e1116 40%,#12151c);
   color:var(--ink);
   font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Arial;
@@ -48,9 +48,9 @@ button:active{transform:translateY(1px)}
 .toolbar{display:flex;gap:10px;align-items:center;margin:16px 0 8px}
 .summary{margin-left:auto;color:var(--ink);font-weight:700}
 
-/* ===== Table Wrapper (唯一のスクロール親) ===== */
+/* ===== Table Wrapper（唯一のスクロール親） ===== */
 .table-wrap{
-  position:relative;                      /* stickyの基準を明示 */
+  position:relative;                      /* 変換基準を固定 */
   background:var(--card);border:1px solid var(--border);border-radius:16px;
   box-shadow:var(--shadow);
   overflow:auto;                          /* 縦横スクロールはここだけ */
@@ -61,8 +61,8 @@ button:active{transform:translateY(1px)}
 /* ===== Table ===== */
 table{
   border-collapse:separate;border-spacing:0;width:100%;
-  min-width:820px;
-  table-layout:fixed;                     /* 列幅安定 */
+  min-width:820px;                         /* 横スクロール前提 */
+  table-layout:fixed;                      /* 列幅安定 */
 }
 
 thead th, tbody td{
@@ -75,7 +75,7 @@ thead th, tbody td{
 
 /* 見出し行（縦固定） */
 thead th{
-  position:-webkit-sticky; position:sticky; top:0;
+  position:sticky; top:0;                  /* 縦だけstickyでOK */
   background:#12161e; color:var(--muted);
   text-align:left; font-weight:600; letter-spacing:.02em;
   z-index:3;
@@ -88,23 +88,22 @@ thead th{
 .col-url{ width:140px; min-width:140px}
 .col-task{width:auto}
 
-/* ===== Sticky: 内側ラッパに sticky を適用（iOS対策） ===== */
-.sticky-cell{
-  position:-webkit-sticky; position:sticky;
-  background:inherit; color:inherit;
-  will-change:transform; transform:translateZ(0);  /* 合成レイヤ確保 */
+/* ===== 1列目（操作列）固定：JSで transform を当てる前提 ===== */
+/* セルは通常のフローで配置。視覚的な固定は transform で行う */
+th.col-ops,
+td.opscell{
+  background:#151a22;
+  z-index:2;
+  will-change:transform;
 }
-.sticky-ops{ left:0; width:140px; z-index:2; background:#151a22; box-shadow: 2px 0 0 #131720; }
-.sticky-head{ top:0; z-index:4; }
-
-/* 1列目（明細）は td 内側の .sticky-cell を固定 */
-td.opscell{ padding:0 } /* 余白はラッパ側に持たせる */
-td.opscell .sticky-cell{
+th.col-ops{ z-index:4; box-shadow: 2px 0 0 #131720; }  /* ヘッダーは最前面 */
+td.opscell{ padding:0 } /* 中身を中央寄せに */
+td.opscell .ops-inner{
   display:flex; align-items:center; justify-content:center; gap:6px;
-  padding:10px 12px; background:#151a22;
+  padding:10px 12px;
 }
 
-/* 行ホバー */
+/* 行ホバー（全体） */
 tbody tr:hover{ background:#141923 }
 
 /* 操作UI */
@@ -133,8 +132,8 @@ tbody td:focus-visible{
   color:var(--hover-ink);
   background:var(--hover-bg);
 }
-td.opscell .sticky-cell:hover,
-td.opscell .sticky-cell:focus-within{
+td.opscell:hover,
+td.opscell:focus-within{
   color:var(--hover-ink);
   background:var(--hover-bg);
   z-index:3;

@@ -20,19 +20,17 @@
 
   <main class="container">
     <div class="toolbar">
+      <!-- 初期は「チェック済み表示：オン」 -->
       <button id="toggleCompletedVisibility">チェック済み表示：オン</button>
       <button id="sortModeBtn">並び順：実行→予定</button>
       <span id="summary" class="summary">0 / 0 完了</span>
     </div>
 
-    <div class="table-wrap">
+    <div class="table-wrap" id="scrollHost">
       <table id="taskTable" aria-label="チェックリスト">
         <thead>
           <tr>
-            <!-- ヘッダー1列目はラッパで sticky（縦横固定） -->
-            <th class="col-ops">
-              <div class="sticky-cell sticky-ops sticky-head">操作</div>
-            </th>
+            <th class="col-ops">操作</th>
             <th class="col-exec">実行時刻</th>
             <th class="col-time">予定時刻</th>
             <th class="col-task">要件</th>
@@ -60,30 +58,73 @@
     </form>
   </dialog>
 
+  <!-- 既存アプリ本体 -->
   <script src="app.js"></script>
 
-  <!-- iOS 安定化：1列目(明細)を自動ラップ。app.jsは触らない -->
+  <!-- 1列目（操作列）を“JSで固定”するための微小スクリプト。app.jsは変更不要 -->
   <script>
     (function(){
-      const wrapOpsCells = () => {
-        const cells = document.querySelectorAll('td.opscell');
-        cells.forEach(td => {
-          const first = td.firstElementChild;
-          if (!first || !first.classList.contains('sticky-cell')) {
-            const wrap = document.createElement('div');
-            wrap.className = 'sticky-cell sticky-ops';
-            while (td.firstChild) wrap.appendChild(td.firstChild);
-            td.appendChild(wrap);
-          }
-        });
-      };
-
-      // 初期＆以降のレンダリングを監視
+      const host = document.getElementById('scrollHost');
       const body = document.getElementById('taskBody');
-      const mo = new MutationObserver(() => { wrapOpsCells(); });
-      mo.observe(body, { childList: true, subtree: true });
 
-      document.addEventListener('DOMContentLoaded', wrapOpsCells);
+      // opsセルの中身を中央寄せするためのラッパを付ける（最初の描画分）
+      function ensureOpsInner(td){
+        if (!td) return;
+        if (!td.firstElementChild || !td.firstElementChild.classList.contains('ops-inner')) {
+          const wrap = document.createElement('div');
+          wrap.className = 'ops-inner';
+          while (td.firstChild) wrap.appendChild(td.firstChild);
+          td.appendChild(wrap);
+        }
+      }
+
+      // 現在の全opsセルにラッパを付与
+      function prepareAllOpsCells(){
+        document.querySelectorAll('td.opscell').forEach(ensureOpsInner);
+      }
+
+      // 横スクロールに追従：left=0の疑似固定（transformで相殺）
+      function syncOpsTransform(){
+        const sl = host.scrollLeft || 0;
+        const t = `translateX(${sl}px)`;
+        // ヘッダー
+        const head = document.querySelector('th.col-ops');
+        if (head) head.style.transform = t;
+
+        // 明細
+        document.querySelectorAll('td.opscell').forEach(td=>{
+          td.style.transform = t;
+        });
+      }
+
+      // 初期化
+      document.addEventListener('DOMContentLoaded', ()=>{
+        prepareAllOpsCells();
+        syncOpsTransform();
+      });
+
+      // スクロール時に追従
+      host.addEventListener('scroll', syncOpsTransform, {passive:true});
+
+      // 行の増減・再描画に対応
+      const mo = new MutationObserver((mut)=>{
+        // 追加された行のopsセルにラッパを足し、変換を再適用
+        for (const m of mut) {
+          m.addedNodes && m.addedNodes.forEach(node=>{
+            if (!(node instanceof HTMLElement)) return;
+            if (node.tagName === 'TR') {
+              ensureOpsInner(node.querySelector('td.opscell'));
+            }
+          });
+        }
+        syncOpsTransform();
+      });
+      mo.observe(body, {childList:true, subtree:false});
+
+      // リサイズ時も補正（横スクロールバー操作直後の反映）
+      window.addEventListener('resize', syncOpsTransform);
+      // 安全のためのポーリング（iOS一部バージョンのスクロールイベント落ち対策）
+      setInterval(syncOpsTransform, 300);
     })();
   </script>
 </body>
