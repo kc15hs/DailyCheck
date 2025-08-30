@@ -16,12 +16,10 @@
         <button id="shareBtn" type="button">共有</button>
       </div>
     </div>
-    <!-- 入力ファイルの書式カードは不要のため削除 -->
   </header>
 
   <main class="container">
     <div class="toolbar">
-      <!-- 初期は「チェック済み表示：オン」 -->
       <button id="toggleCompletedVisibility">チェック済み表示：オン</button>
       <button id="sortModeBtn">並び順：実行→予定</button>
       <span id="summary" class="summary">0 / 0 完了</span>
@@ -62,10 +60,9 @@
     </form>
   </dialog>
 
-  <!-- 既存ロジック -->
   <script src="app.js"></script>
 
-  <!-- iOS 安定化のため：1列目(明細)を自動でラップするスクリプト（app.jsは変更不要） -->
+  <!-- iOS 安定化：1列目(明細)を自動ラップ。app.jsは触らない -->
   <script>
     (function(){
       const wrapOpsCells = () => {
@@ -73,7 +70,6 @@
         cells.forEach(td => {
           const first = td.firstElementChild;
           if (!first || !first.classList.contains('sticky-cell')) {
-            // 既存の子要素をラッパへ移し替え
             const wrap = document.createElement('div');
             wrap.className = 'sticky-cell sticky-ops';
             while (td.firstChild) wrap.appendChild(td.firstChild);
@@ -87,7 +83,6 @@
       const mo = new MutationObserver(() => { wrapOpsCells(); });
       mo.observe(body, { childList: true, subtree: true });
 
-      // 万一先に行がいた場合にも一度実行
       document.addEventListener('DOMContentLoaded', wrapOpsCells);
     })();
   </script>

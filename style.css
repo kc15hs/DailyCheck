@@ -16,6 +16,7 @@
 html,body{height:100%}
 body{
   margin:0;
+  overflow-x:hidden;                      /* ページ側の横スクロールを禁止 */
   background:linear-gradient(180deg,#0b0c10,#0e1116 40%,#12151c);
   color:var(--ink);
   font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Arial;
@@ -49,9 +50,11 @@ button:active{transform:translateY(1px)}
 
 /* ===== Table Wrapper (唯一のスクロール親) ===== */
 .table-wrap{
+  position:relative;                      /* stickyの基準を明示 */
   background:var(--card);border:1px solid var(--border);border-radius:16px;
-  box-shadow:var(--shadow);overflow:auto;          /* 縦横スクロール */
-  -webkit-overflow-scrolling:touch;                /* iOS慣性 */
+  box-shadow:var(--shadow);
+  overflow:auto;                          /* 縦横スクロールはここだけ */
+  -webkit-overflow-scrolling:touch;       /* iOS慣性 */
   max-height:70vh;
 }
 
@@ -59,7 +62,7 @@ button:active{transform:translateY(1px)}
 table{
   border-collapse:separate;border-spacing:0;width:100%;
   min-width:820px;
-  table-layout:fixed;                               /* 列幅安定 */
+  table-layout:fixed;                     /* 列幅安定 */
 }
 
 thead th, tbody td{
@@ -85,22 +88,23 @@ thead th{
 .col-url{ width:140px; min-width:140px}
 .col-task{width:auto}
 
-/* ===== Sticky: 内側ラッパに sticky を当てる（iOS対策） ===== */
+/* ===== Sticky: 内側ラッパに sticky を適用（iOS対策） ===== */
 .sticky-cell{
   position:-webkit-sticky; position:sticky;
   background:inherit; color:inherit;
   will-change:transform; transform:translateZ(0);  /* 合成レイヤ確保 */
 }
-.sticky-ops{ left:0; width:140px; z-index:2; background:#151a22; }
+.sticky-ops{ left:0; width:140px; z-index:2; background:#151a22; box-shadow: 2px 0 0 #131720; }
 .sticky-head{ top:0; z-index:4; }
 
-/* 1列目（明細）のセル自体は通常のtd。中の .sticky-cell を固定 */
-td.opscell{ padding:0 } /* 内側ラッパで余白を持つ */
+/* 1列目（明細）は td 内側の .sticky-cell を固定 */
+td.opscell{ padding:0 } /* 余白はラッパ側に持たせる */
 td.opscell .sticky-cell{
   display:flex; align-items:center; justify-content:center; gap:6px;
   padding:10px 12px; background:#151a22;
 }
 
+/* 行ホバー */
 tbody tr:hover{ background:#141923 }
 
 /* 操作UI */
