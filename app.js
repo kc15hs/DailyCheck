@@ -164,9 +164,6 @@ function isMissingBoth(r){
 }
 
 // 予定側のキー（カテゴリ, 時刻文字）
-//   0: 有効時刻（"hh:mm"）
-//   1: 非時刻/空
-//   2: LOOP（さらに後ろ）
 const plannedKey = r => {
   const t = (r.planned_time||'').toUpperCase();
   if (isValidHHMM(r.planned_time)) return ['0', r.planned_time];
@@ -175,43 +172,34 @@ const plannedKey = r => {
 };
 
 // 実行側のキー（カテゴリ, 時刻文字）
-//   0: 実行時刻あり
-//   1: 実行時刻なし
 const execKey = r => {
   const h = hhmmFromISO(r.completed_at);
   if (isValidHHMM(h)) return ['0', h];
   return ['1', '98:98'];
 };
 
-// ★ 並び替え本体：要望どおり「実行→予定」時は、実行なし同士を予定時刻で昇順
+// 並び替え：実行→予定 は「実行あり→実行時刻昇順」「実行なし→予定時刻昇順」、両方空は最下部
 function sortRowsForDisplay(rows){
   const x = [...rows];
   x.sort((a,b)=>{
-    // まず両方空（予定も実行も無効）は最下部へ
     const ma = isMissingBoth(a), mb = isMissingBoth(b);
     if (ma !== mb) return ma ? 1 : -1;
 
     if (sortMode==='planned_then_exec'){
-      // 既存通り：予定優先
       const [ca,ka] = plannedKey(a);
       const [cb,kb] = plannedKey(b);
       if (ca < cb) return -1; if (ca > cb) return 1;
       if (ka < kb) return -1; if (ka > kb) return 1;
       return (a._idx - b._idx);
     } else {
-      // 実行優先：実行ありを先、時刻昇順
       const [ea,xa] = execKey(a);
       const [eb,xb] = execKey(b);
-
-      // 実行あり/なしでグループ分け
       if (ea !== eb) return ea < eb ? -1 : 1;
 
       if (ea === '0' && eb === '0') {
-        // 両方実行あり → 実行時刻で昇順
         if (xa < xb) return -1; if (xa > xb) return 1;
         return (a._idx - b._idx);
       } else {
-        // 両方とも実行なし → ★ 予定時刻で昇順に並べる
         const [ca,ka] = plannedKey(a);
         const [cb,kb] = plannedKey(b);
         if (ca < cb) return -1; if (ca > cb) return 1;
@@ -371,31 +359,25 @@ function handleFile(file){
   reader.readAsText(file, 'utf-8');
 }
 
-// CSV出力（ヘッダなし・4列 A,B,C,D を維持）
+// === CSV出力（進捗CSVのみ／同名で保存提案） ===
 async function exportCSV(){
-  // 出力ファイル名は読み込んだ名前を優先（なければ既定）
+  // 読み込んだファイル名を優先（同名で上書き提案）
   let filename = 'DailyCheck.csv';
   if (fileInput.files && fileInput.files.length > 0) {
     filename = fileInput.files[0].name;
   }
 
-  // DOMから現在表示の内容を拾って4列で整形（A=予定/時刻, B=要件, C=地図URL, D=説明URL）
-  const lines = [];
-  qsa('#taskBody tr').forEach(tr=>{
-    const tds    = qsa('td', tr);
-    // 列順：[0]=操作, [1]=実行, [2]=予定(A), [3]=要件(B), [4]=説明(D), [5]=地図(C)
-    const colA = tds[2].textContent==='—' ? '' : tds[2].textContent;
-    const colB = tds[3].textContent==='—' ? '' : tds[3].textContent;
-    const linkDesc = qs('a', tds[4]); // 説明リンク(D)
-    const colD = linkDesc ? linkDesc.getAttribute('href') : '';
-    const linkMap = qs('a', tds[5]);  // 地図リンク(C)
-    const colC = linkMap ? linkMap.getAttribute('href') : '';
-
-    lines.push([colA, colB, colC, colD].map(v=>String(v||'')).join(','));
-  });
-
-  const csv = lines.join('\n');
-  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  // currentRows から正確に（DOMに依存しない）
+  const header = 'checked,planned_time,completed_at,task,desc_url,url\n';
+  const lines = currentRows.map(r=>[
+    r.checked ? 1 : 0,
+    r.planned_time || '',
+    r.completed_at || '',
+    (r.task || '').replace(/[\r\n]/g, ' ').trim(),
+    r.desc_url || '',
+    r.url || ''
+  ].map(v=>String(v)).join(','));
+  const blob = new Blob([header + lines.join('\n')], {type:'text/csv;charset=utf-8'});
 
   if('showSaveFilePicker' in window){
     try{

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>DailyCheck</title>
   <link rel="stylesheet" href="style.css" />
-  <!-- 操作列（1列目）を横固定、ヘッダ行を上部固定。左上コーナー(操作ヘッダ)は両方向固定 -->
+  <!-- 操作列（1列目）を横固定、ヘッダ行を上部固定。左上コーナー(操作ヘッダ)は縦横固定 -->
   <style>
     :root{
       /* 固定見出しと固定列の配色（必要ならここだけ変更） */
@@ -16,7 +16,6 @@
       overflow-x: auto;
       overflow-y: auto;
     }
-    /* stickyが効くように separate 推奨（既存が別でも上書きOK） */
     .table {
       border-collapse: separate;
       border-spacing: 0;
@@ -26,7 +25,7 @@
     .table thead th {
       position: sticky;
       top: 0;
-      z-index: 4;               /* 本文セルより前面 */
+      z-index: 4;
       background: var(--opcol-bg);
       color: var(--opcol-fg);
       white-space: nowrap;
@@ -36,20 +35,16 @@
     .table td:first-child {
       position: sticky;
       left: 0;
-      z-index: 2;               /* 後続セルより前面、ただしヘッダよりは低く */
+      z-index: 2;
       background: var(--opcol-bg);
       color: var(--opcol-fg);
+      box-shadow: 2px 0 0 0 rgba(255,255,255,0.12);
     }
-    /* 左上コーナー（操作ヘッダ）は縦横どちらにも固定されるよう、最前面に */
+    /* 左上コーナー（操作ヘッダ）は縦横どちらにも固定、最前面 */
     .table thead th:first-child {
       left: 0;
       top: 0;
-      z-index: 5;               /* ヘッダ中でも最前面 */
-    }
-    /* 視覚的な区切り（お好みで） */
-    .table th:first-child,
-    .table td:first-child {
-      box-shadow: 2px 0 0 0 rgba(255,255,255,0.12);
+      z-index: 5;
     }
   </style>
 </head>
@@ -64,7 +59,7 @@
       </div>
       <div class="toggles">
         <button id="toggleCompletedVisibility" type="button">完了も表示</button>
-        <!-- 初期ラベルは実行→予定（前回仕様） -->
+        <!-- 初期ラベルは実行→予定 -->
         <button id="sortModeBtn" type="button">実行→予定</button>
       </div>
     </div>
@@ -105,10 +100,7 @@
     </form>
   </dialog>
 
-  <!-- アプリ本体（変更なし） -->
   <script src="app.js"></script>
-
-  <!-- 既存のスクロール同期フック（変更なし） -->
   <script>
     (function(){
       const host = document.getElementById('scrollHost');
