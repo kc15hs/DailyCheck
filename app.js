@@ -16,7 +16,7 @@ const sortModeBtn   = qs('#sortModeBtn');
 // 表示トグル：初期は「全データ表示（チェック済みも表示）」＝オン
 let showCompleted = true;
 
-// ★ 初期ソートモード：実行→予定 に変更
+// 初期ソートモード：実行→予定
 let sortMode = 'exec_then_planned'; // or 'planned_then_exec'
 
 // レコード配列（UIの唯一の真実）
@@ -72,13 +72,14 @@ function isoToLocalDateStr(iso){
   return `${y}-${m}-${day}`;
 }
 
+// 旧「アプリCSV」判定（読み込み後方互換用）
 function looksLikeAppHeader(s){
   const h = s.trim().toLowerCase();
   return h === 'checked,planned_time,completed_at,task,url' ||
          h === 'checked,planned_time,completed_at,task,desc_url,url';
 }
 
-// 旧ヘッダ付CSVの後方互換読み込み
+// 旧「アプリCSV」読み込み（後方互換）
 function parseAppCSV(text){
   const lines = text.split(/\r?\n/);
   if(!lines.length) return [];
@@ -148,51 +149,75 @@ function parsePlainCSV(text){
 function detectFormatAndParse(text){
   const first = (text.split(/\r?\n/)[0]||'').trim();
   if(looksLikeAppHeader(first)) return parseAppCSV(text);
-  return parsePlainCSV(text);
+  return parsePlainCSV(text); // 既定：4列ヘッダなしCSV
 }
 
-// ★ 追加：時刻の有効判定と「両方空」判定
+// === 並び替えユーティリティ ===
 const isValidHHMM = t => /^\d{2}:\d{2}$/.test(String(t||'').trim());
+
+// 「予定も実行もどちらも有効時刻でない」→最下部送り
 function isMissingBoth(r){
   const pValid = isValidHHMM(r.planned_time);
-  const eStr = hhmmFromISO(r.completed_at);
+  const eStr   = hhmmFromISO(r.completed_at);
   const eValid = isValidHHMM(eStr);
-  // 予定も実行も有効な時刻でない（空、LOOP、非時刻等）→ 最下部へ送りたいグループ
   return !pValid && !eValid;
 }
 
-function sortRowsForDisplay(rows){
-  // 並べ替えキー作成
-  const plannedKey = r => {
-    const t = (r.planned_time||'').toUpperCase();
-    if (isValidHHMM(r.planned_time)) return ['0', r.planned_time]; // 正常時刻
-    if (t === 'LOOP')                 return ['2', '99:99'];        // LOOP は末尾寄り
-    return ['1', '98:98'];                                         // 非時刻/空はその次
-  };
-  const execKey = r => {
-    const h = hhmmFromISO(r.completed_at);
-    if (isValidHHMM(h)) return ['0', h];           // 実行時刻あり
-    return ['1', '98:98'];                          // なし
-  };
+// 予定側のキー（カテゴリ, 時刻文字）
+//   0: 有効時刻（"hh:mm"）
+//   1: 非時刻/空
+//   2: LOOP（さらに後ろ）
+const plannedKey = r => {
+  const t = (r.planned_time||'').toUpperCase();
+  if (isValidHHMM(r.planned_time)) return ['0', r.planned_time];
+  if (t === 'LOOP')                 return ['2', '99:99'];
+  return ['1', '98:98'];
+};
 
+// 実行側のキー（カテゴリ, 時刻文字）
+//   0: 実行時刻あり
+//   1: 実行時刻なし
+const execKey = r => {
+  const h = hhmmFromISO(r.completed_at);
+  if (isValidHHMM(h)) return ['0', h];
+  return ['1', '98:98'];
+};
+
+// ★ 並び替え本体：要望どおり「実行→予定」時は、実行なし同士を予定時刻で昇順
+function sortRowsForDisplay(rows){
   const x = [...rows];
   x.sort((a,b)=>{
-    // ★ まず「両方空」の行を常に最下部へ
+    // まず両方空（予定も実行も無効）は最下部へ
     const ma = isMissingBoth(a), mb = isMissingBoth(b);
     if (ma !== mb) return ma ? 1 : -1;
 
     if (sortMode==='planned_then_exec'){
+      // 既存通り：予定優先
       const [ca,ka] = plannedKey(a);
       const [cb,kb] = plannedKey(b);
       if (ca < cb) return -1; if (ca > cb) return 1;
       if (ka < kb) return -1; if (ka > kb) return 1;
       return (a._idx - b._idx);
-    }else{
-      const [ca,ka] = execKey(a);
-      const [cb,kb] = execKey(b);
-      if (ca < cb) return -1; if (ca > cb) return 1;
-      if (ka < kb) return -1; if (ka > kb) return 1;
-      return (a._idx - b._idx);
+    } else {
+      // 実行優先：実行ありを先、時刻昇順
+      const [ea,xa] = execKey(a);
+      const [eb,xb] = execKey(b);
+
+      // 実行あり/なしでグループ分け
+      if (ea !== eb) return ea < eb ? -1 : 1;
+
+      if (ea === '0' && eb === '0') {
+        // 両方実行あり → 実行時刻で昇順
+        if (xa < xb) return -1; if (xa > xb) return 1;
+        return (a._idx - b._idx);
+      } else {
+        // 両方とも実行なし → ★ 予定時刻で昇順に並べる
+        const [ca,ka] = plannedKey(a);
+        const [cb,kb] = plannedKey(b);
+        if (ca < cb) return -1; if (ca > cb) return 1;
+        if (ka < kb) return -1; if (ka > kb) return 1;
+        return (a._idx - b._idx);
+      }
     }
   });
   return x;
@@ -296,8 +321,8 @@ function renderRows(date, rows){
       tr.style.display = 'none';
     }
 
-    taskBody.append(tr);
     tr.append(tdOps, tdExec, tdTime, tdTask, tdDesc, tdUrl);
+    taskBody.append(tr);
   });
   emptyMsg.style.display = rows.length ? 'none' : '';
   updateSummary();
@@ -358,7 +383,7 @@ async function exportCSV(){
   const lines = [];
   qsa('#taskBody tr').forEach(tr=>{
     const tds    = qsa('td', tr);
-    // 列順：[0]=操作, [1]=実行(A*), [2]=予定(A), [3]=要件(B), [4]=説明(D), [5]=地図(C)
+    // 列順：[0]=操作, [1]=実行, [2]=予定(A), [3]=要件(B), [4]=説明(D), [5]=地図(C)
     const colA = tds[2].textContent==='—' ? '' : tds[2].textContent;
     const colB = tds[3].textContent==='—' ? '' : tds[3].textContent;
     const linkDesc = qs('a', tds[4]); // 説明リンク(D)
